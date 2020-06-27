@@ -2,7 +2,11 @@ import random
 import pygame
 import tkinter as tk
 from tkinter import messagebox
+import neat
+import os
+from pynput.keyboard import Key, Controller
 
+keyboard = Controller()
 
 class Cube(object):
     rows = 20
@@ -164,9 +168,10 @@ def drawGrid(rows, w, surface):
 
 
 def redrawWindow(surface):
-    global rows, width, snek, snack
+    global rows, width, snakes, snack
     surface.fill((0, 0, 0))
-    snek.draw(surface)
+    for snake in snakes:
+        snake.draw(surface)
     snack.draw(surface)
     drawGrid(rows, width, surface)
     pygame.display.update()
@@ -197,13 +202,25 @@ def message_box(subject, content):
         pass
 
 
-def main():
-    global width, rows, snek, snack
+def main(genomes, config):
+    global width, rows, snakes, snack
+    nets =[]
+    ge = []
+    snakes = []
+    for _, g in genomes:
+        net = neat.nn.FeedForwardNetwork.create(g, config)
+        nets.append(net)
+        snakes.append(Snake((0, 255, 0), (10, 10)))
+        g.fitness = 0
+        ge.append(g)
+
     width = 500
     rows = 20
     win = pygame.display.set_mode((width, width))
-    snek = Snake((255, 0, 0), (10, 10))
-    snack = Cube(randomSnack(rows, snek), color = (255, 0, 0))
+
+    for snake in snakes:
+        snack = Cube(randomSnack(rows, snake), color = (255, 0, 0))
+
     flag = True
 
     clock = pygame.time.Clock()
@@ -211,19 +228,58 @@ def main():
     while flag:
         pygame.time.delay(50)
         clock.tick(10)
-        snek.move()
-        if snek.body[0].pos == snack.pos:
-            snek.addCube()
-            snack = Cube(randomSnack(rows, snek), color = (255, 0, 0))
+        for q, snake in enumerate(snakes):
+            snake.move()
+            ge[q].fitness += 0.1
 
-        for x in range(len(snek.body)):
-            if snek.body[x].pos in list(map(lambda z: z.pos, snek.body[x + 1:])):
-                print('Score: ', len(snek.body))
-                message_box('You Lost!', 'Play again...')
-                snek.reset((10, 10))
+            snack_loc = list(snack.pos)
+            output = nets[q].activate(snake.directionx, snake.directiony, snack_loc[0], snack_loc[1])
+            index = 0
+            for i, x in enumerate(output):
+                if x > output[index]:
+                    index = i
+
+            if index > 0:
+                keyboard.press('w')
+            elif index > 1:
+                keyboard.press('a')
+            elif index > 2:
+                keyboard.press('s')
+            elif index > 3:
+                keyboard.press('d')
+
+            if snake.body[0].pos == snack.pos:
+                snake.addCube()
+                snack = Cube(randomSnack(rows, snake), color = (255, 0, 0))
+                ge[q].fitness += 10
+    
+            for x in range(len(snake.body)):
+                if snake.body[x].pos in list(map(lambda z: z.pos, snake.body[x + 1:])):
+                    ge[q].fitness -= 1
+                    snakes.pop(x)
+                    nets.pop(x)
+                    ge.pop(x)
+
+            if len(snakes) == 0:
+                flag = False
                 break
 
         redrawWindow(win)
 
+def run(config_path):
+    config = neat.config.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                                neat.DefaultSpeciesSet, neat.DefaultStagnation,
+                                config_path)
 
-main()
+    p = neat.Population(config)
+
+    p.add_reporter(neat.StdOutReporter(True))
+    stats = neat.StatisticsReporter()
+    p.add_reporter(stats)
+
+    winner = p.run(main, 50)
+
+if __name__=="__main__":
+    local_dir = os.path.dirname(__file__)
+    config_path = os.path.join(local_dir, "config-feedforward.txt")
+    run(config_path)
